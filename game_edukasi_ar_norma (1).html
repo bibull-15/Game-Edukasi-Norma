@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Edukasi AR: Penerapan Norma</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;600;800&family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Nunito', sans-serif;
+            overflow: hidden;
+            background-color: #1e293b;
+            color: white;
+            user-select: none;
+        }
+        h1, h2, h3, .title-font {
+            font-family: 'Baloo 2', cursive;
+        }
+        
+        /* Camera Mirroring */
+        #output_canvas {
+            transform: scaleX(-1);
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        .overlay-ui {
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Glassmorphism effects */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Animations */
+        .glow-active {
+            box-shadow: 0 0 30px rgba(250, 204, 21, 0.8);
+            border-color: #facc15 !important;
+            transform: scale(1.02);
+            transition: all 0.3s ease;
+        }
+        .correct-ans {
+            background: rgba(34, 197, 94, 0.9) !important;
+            border-color: #16a34a !important;
+            box-shadow: 0 0 40px rgba(34, 197, 94, 0.8);
+            transform: scale(1.05);
+        }
+        .wrong-ans {
+            background: rgba(239, 68, 68, 0.9) !important;
+            border-color: #dc2626 !important;
+        }
+        .fade-in { animation: fadeIn 0.5s ease forwards; }
+        .slide-up { animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp {
+            from { transform: translateY(50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* Loader */
+        .loader {
+            border: 8px solid rgba(255,255,255,0.2);
+            border-top: 8px solid #3b82f6;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="w-screen h-screen flex items-center justify-center relative">
+
+    <!-- LOADING OVERLAY -->
+    <div id="loading-screen" class="absolute inset-0 bg-slate-900 z-50 flex flex-col items-center justify-center hidden">
+        <div class="loader mb-6"></div>
+        <h2 class="text-3xl title-font font-bold text-white animate-pulse">Menyiapkan Kamera & AI...</h2>
+        <p class="text-gray-300 mt-2 text-xl">Pastikan izinkan akses kamera ya!</p>
+    </div>
+
+    <!-- 1. SETUP SCREEN -->
+    <div id="setup-screen" class="absolute inset-0 z-40 bg-gradient-to-br from-blue-900 to-indigo-900 flex flex-col items-center justify-center p-8">
+        <div class="glass-panel p-10 rounded-3xl w-full max-w-4xl text-center slide-up">
+            <h1 class="text-6xl title-font font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-yellow-500 mb-4 drop-shadow-lg">
+                Petualangan Norma!
+            </h1>
+            <p class="text-2xl text-blue-200 mb-8">Pilih A atau B dengan bergerak ke kiri / kanan kamera!</p>
+            
+            <div class="space-y-6 text-left max-w-2xl mx-auto">
+                <div>
+                    <label class="block text-xl font-bold mb-2 text-yellow-300">Nama Siswa / Kelompok:</label>
+                    <input type="text" id="input-name" class="w-full text-2xl p-4 rounded-xl text-gray-800 focus:outline-none focus:ring-4 focus:ring-blue-400" placeholder="Masukkan Nama..." required>
+                </div>
+                <div>
+                    <label class="block text-xl font-bold mb-2 text-yellow-300">Kelas:</label>
+                    <input type="text" id="input-class" class="w-full text-2xl p-4 rounded-xl text-gray-800 focus:outline-none focus:ring-4 focus:ring-blue-400" placeholder="Contoh: 6A" required>
+                </div>
+                <div>
+                    <label class="block text-xl font-bold mb-2 text-yellow-300">Durasi Timer per Soal:</label>
+                    <div class="grid grid-cols-4 gap-4">
+                        <label class="cursor-pointer">
+                            <input type="radio" name="timer-setting" value="4" class="peer sr-only">
+                            <div class="p-4 bg-slate-700 rounded-xl text-center text-2xl peer-checked:bg-blue-500 peer-checked:font-bold border-2 border-transparent peer-checked:border-white transition-all">4 Detik</div>
+                        </label>
+                        <label class="cursor-pointer">
+                            <input type="radio" name="timer-setting" value="5" class="peer sr-only">
+                            <div class="p-4 bg-slate-700 rounded-xl text-center text-2xl peer-checked:bg-blue-500 peer-checked:font-bold border-2 border-transparent peer-checked:border-white transition-all">5 Detik</div>
+                        </label>
+                        <label class="cursor-pointer">
+                            <input type="radio" name="timer-setting" value="7" class="peer sr-only">
+                            <div class="p-4 bg-slate-700 rounded-xl text-center text-2xl peer-checked:bg-blue-500 peer-checked:font-bold border-2 border-transparent peer-checked:border-white transition-all">7 Detik</div>
+                        </label>
+                        <label class="cursor-pointer">
+                            <input type="radio" name="timer-setting" value="10" class="peer sr-only" checked>
+                            <div class="p-4 bg-slate-700 rounded-xl text-center text-2xl peer-checked:bg-blue-500 peer-checked:font-bold border-2 border-transparent peer-checked:border-white transition-all">10 Detik</div>
+                        </label>
+                    </div>
+                </div>
+                <button onclick="startGame()" class="w-full mt-8 bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white font-bold text-3xl py-5 px-8 rounded-2xl shadow-xl transform transition hover:-translate-y-1 active:translate-y-2 border-b-4 border-green-800">
+                    MULAI BERMAIN! 🚀
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. MAIN GAME SCREEN -->
+    <div id="game-screen" class="absolute inset-0 hidden">
+        <!-- Hidden video element for MediaPipe -->
+        <video id="input_video" class="hidden" autoplay playsinline></video>
+        <!-- Canvas for showing camera background -->
+        <canvas id="output_canvas"></canvas>
+
+        <!-- UI Overlay -->
+        <div class="overlay-ui w-full h-full flex flex-col justify-between pointer-events-none p-6">
+            
+            <!-- Top Section: Question & Timer -->
+            <div class="flex justify-between items-start gap-4">
+                <div class="glass-panel rounded-2xl p-6 flex-1 text-center shadow-2xl">
+                    <h2 class="text-yellow-300 font-bold text-2xl mb-1">Pertanyaan <span id="q-number">1</span>/10</h2>
+                    <p id="question-text" class="text-4xl md:text-5xl font-bold leading-tight drop-shadow-md">
+                        Menaati rambu lalu lintas adalah bentuk dari norma...
+                    </p>
+                </div>
+                
+                <div class="glass-panel rounded-full w-32 h-32 flex flex-col items-center justify-center border-4 border-yellow-400 flex-shrink-0 relative overflow-hidden">
+                    <div id="timer-bg" class="absolute bottom-0 left-0 w-full bg-yellow-500/30 transition-all duration-1000" style="height: 100%;"></div>
+                    <span id="timer-text" class="text-6xl font-black title-font relative z-10 text-yellow-300 drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)]">10</span>
+                </div>
+            </div>
+
+            <!-- Middle Section: Split Screen Detection Zones -->
+            <div class="flex-1 flex w-full h-full my-4 gap-8">
+                <!-- Zona A (Kiri) -->
+                <div id="zone-A" class="flex-1 flex flex-col items-center justify-center p-8 glass-panel rounded-3xl border-4 border-blue-400/50 transition-all duration-300">
+                    <div class="text-center w-full">
+                        <p id="ans-a-text" class="text-5xl font-black text-white mb-4 drop-shadow-lg">Norma Hukum</p>
+                        <p id="ans-a-desc" class="text-3xl text-blue-200 font-semibold">Aturan resmi negara</p>
+                    </div>
+                </div>
+                
+                <!-- Zona B (Kanan) -->
+                <div id="zone-B" class="flex-1 flex flex-col items-center justify-center p-8 glass-panel rounded-3xl border-4 border-pink-400/50 transition-all duration-300">
+                    <div class="text-center w-full">
+                        <p id="ans-b-text" class="text-5xl font-black text-white mb-4 drop-shadow-lg">Norma Kesopanan</p>
+                        <p id="ans-b-desc" class="text-3xl text-pink-200 font-semibold">Kebiasaan masyarakat</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-center pb-2">
+                <span id="detection-status" class="bg-black/50 text-white px-6 py-2 rounded-full text-xl font-bold tracking-widest uppercase">
+                    Mendeteksi Posisi... Berdirilah di area pilihanmu!
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. WINNER / RESULT SCREEN -->
+    <div id="result-screen" class="absolute inset-0 z-50 bg-gradient-to-br from-indigo-900 via-purple-900 to-black hidden flex flex-col items-center justify-center p-8 text-center overflow-y-auto">
+        <div class="glass-panel p-10 rounded-3xl w-full max-w-5xl slide-up">
+            
+            <!-- Confetti (Simple CSS representation) -->
+            <div class="text-7xl mb-4">🏆 🎉 🌟</div>
+
+            <h1 id="result-greeting" class="text-5xl md:text-6xl title-font font-extrabold text-yellow-300 mb-6 drop-shadow-lg">
+                <!-- Variasi Selamat akan muncul di sini -->
+            </h1>
+
+            <div class="bg-white/10 rounded-2xl p-8 mb-8 border border-white/20 w-full max-w-4xl mx-auto">
+                <h2 class="text-3xl font-bold text-blue-200 mb-2">RANGKUMAN SKOR KELAS</h2>
+                <div class="text-6xl font-black text-white title-font mb-4 drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)]">
+                    <span id="final-score" class="text-green-400">0</span> / <span id="total-score">10</span>
+                </div>
+                <div class="text-2xl font-semibold mb-6">
+                    Akurasi: <span id="accuracy-text" class="text-yellow-400 text-4xl">0%</span>
+                </div>
+                
+                <!-- Tempat Juara 1, 2, 3 -->
+                <div class="flex justify-center items-end gap-4 mt-6 w-full">
+                    <div class="bg-gray-400/20 p-4 rounded-xl border border-gray-400/50 w-1/3 mb-4">
+                        <div class="text-4xl mb-2">🥈</div>
+                        <div class="text-xl font-bold text-white">Juara 2</div>
+                        <div class="text-sm text-gray-300 mt-1">(Nama Siswa/Kelompok)</div>
+                    </div>
+                    <div class="bg-yellow-500/20 p-6 rounded-t-2xl border-t-2 border-l-2 border-r-2 border-yellow-500/50 w-1/3 transform scale-110 z-10 shadow-2xl">
+                        <div class="text-5xl mb-2">🥇</div>
+                        <div class="text-2xl font-black text-yellow-300">Juara 1</div>
+                        <div id="champ-name" class="text-xl text-yellow-100 font-bold truncate mt-2">Nama Siswa</div>
+                    </div>
+                    <div class="bg-orange-700/30 p-4 rounded-xl border border-orange-700/50 w-1/3 mb-4">
+                        <div class="text-4xl mb-2">🥉</div>
+                        <div class="text-xl font-bold text-white">Juara 3</div>
+                        <div class="text-sm text-orange-200 mt-1">(Nama Siswa/Kelompok)</div>
+                    </div>
+                </div>
+            </div>
+
+            <h3 id="result-motivation" class="text-2xl md:text-3xl font-bold text-pink-300 mb-8 italic">
+                <!-- Variasi Motivasi akan muncul di sini -->
+            </h3>
+
+            <div class="bg-blue-600/30 p-6 rounded-xl border border-blue-400/30 mb-8">
+                <p id="result-evaluation" class="text-2xl font-bold text-white">
+                    <!-- Kalimat Ajakan Evaluasi -->
+                </p>
+            </div>
+
+            <button onclick="location.reload()" class="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold text-3xl py-4 px-10 rounded-full shadow-xl transform transition hover:scale-105 border-b-4 border-blue-800">
+                Main Lagi! 🔄
+            </button>
+        </div>
+    </div>
+
+    <!-- AUDIO EFFECTS (Base64 or standard browser beeps for self-containment) -->
+    <script>
+        // Simple Audio Synthesizer for feedback to avoid external assets
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playTone(freq, type, duration) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        const playCorrect = () => { playTone(600, 'sine', 0.1); setTimeout(() => playTone(800, 'sine', 0.2), 100); };
+        const playWrong = () => { playTone(300, 'sawtooth', 0.3); };
+        const playTick = () => { playTone(1000, 'square', 0.05); };
+    </script>
+
+    <script>
+        /* ========================
+           DATA & VARIABEL STATE
+        ======================== */
+        const quizData = [
+            {
+                question: "Berpamitan dan mencium tangan orang tua sebelum ke sekolah adalah penerapan...",
+                ansA: "Norma Kesopanan", descA: "(Bersumber dari kebiasaan & tata krama)",
+                ansB: "Norma Hukum", descB: "(Bersumber dari undang-undang)",
+                correct: "A"
+            },
+            {
+                question: "Jika kamu jujur dan tidak mencontek saat ujian karena mendengarkan hati nurani, kamu mematuhi...",
+                ansA: "Norma Hukum", descA: "(Aturan sekolah resmi)",
+                ansB: "Norma Kesusilaan", descB: "(Bersumber dari hati nurani)",
+                correct: "B"
+            },
+            {
+                question: "Melaksanakan ibadah tepat waktu sesuai ajaran agama masing-masing merupakan wujud...",
+                ansA: "Norma Agama", descA: "(Ajaran dari Tuhan/Kitab Suci)",
+                ansB: "Norma Kesopanan", descB: "(Adat istiadat setempat)",
+                correct: "A"
+            },
+            {
+                question: "Berhenti saat lampu merah menyala untuk menghindari kecelakaan dan denda adalah bentuk ketaatan pada...",
+                ansA: "Norma Kesusilaan", descA: "(Perasaan manusia)",
+                ansB: "Norma Hukum", descB: "(Aturan tegas negara)",
+                correct: "B"
+            },
+            {
+                question: "Sanksi berupa rasa menyesal atau bersalah pada diri sendiri terjadi jika kita melanggar...",
+                ansA: "Norma Kesusilaan", descA: "(Suara hati nurani)",
+                ansB: "Norma Agama", descB: "(Dosa dari Tuhan)",
+                correct: "A"
+            },
+            {
+                question: "Sanksi tegas seperti denda atau penjara akan diberikan oleh negara kepada pelanggar...",
+                ansA: "Norma Kesopanan", descA: "(Sanksi teguran warga)",
+                ansB: "Norma Hukum", descB: "(Sanksi aparat penegak hukum)",
+                correct: "B"
+            },
+            {
+                question: "Tidak meludah sembarangan dan berbicara lembut kepada orang yang lebih tua adalah contoh penerapan...",
+                ansA: "Norma Kesopanan", descA: "(Tata krama bermasyarakat)",
+                ansB: "Norma Kesusilaan", descB: "(Bisikan kalbu)",
+                correct: "A"
+            },
+            {
+                question: "Menghargai teman yang sedang berpuasa atau melaksanakan ibadahnya adalah pengamalan...",
+                ansA: "Norma Agama", descA: "(Toleransi antar umat beragama)",
+                ansB: "Norma Hukum", descB: "(Peraturan tertulis)",
+                correct: "A"
+            },
+            {
+                question: "Sanksi berupa pengucilan, cemoohan, atau digunjingkan oleh tetangga biasanya menimpa pelanggar...",
+                ansA: "Norma Agama", descA: "(Sanksi dosa di akhirat)",
+                ansB: "Norma Kesopanan", descB: "(Sanksi sosial masyarakat)",
+                correct: "B"
+            },
+            {
+                question: "Mengembalikan dompet yang jatuh di jalan kepada pemiliknya karena merasa kasihan didorong oleh...",
+                ansA: "Norma Kesusilaan", descA: "(Nilai kemanusiaan & sanubari)",
+                ansB: "Norma Hukum", descB: "(Takut dipenjara polisi)",
+                correct: "A"
+            }
+        ];
+
+        // Variasi Teks Akhir (Sesuai Permintaan)
+        const selamatVariations = [
+            "Luar biasa! Selamat kepada para juara yang berhasil bertahan hingga akhir!",
+            "Hebat sekali! Kalian adalah bintang kelas hari ini, selamat atas kemenangannya!",
+            "Kerja bagus, pahlawan norma! Selamat telah membuktikan kemampuan hebat kalian!"
+        ];
+        
+        const motivasiVariations = [
+            "Untuk yang belum menang hari ini, jangan menyerah! Terus semangat belajar dan jadilah juara di kesempatan berikutnya!",
+            "Kalian semua hebat sudah berani berkompetisi! Yuk, jadikan pengalaman ini semangat untuk terus maju!",
+            "Belum menang bukan berarti kalah, tapi sukses yang tertunda. Tetap ceria, kalian pasti bisa!"
+        ];
+
+        const evaluasiText = "Yuk, sekarang kita diskusikan bersama Bapak/Ibu Guru untuk soal-soal yang tadi masih keliru. Perhatikan baik-baik ya agar makin pintar!";
+
+        let currentState = {
+            playerName: "",
+            playerClass: "",
+            timerDuration: 10,
+            currentQuestion: 0,
+            score: 0,
+            currentChoice: null, // 'A' or 'B'
+            isTimerRunning: false,
+            timeLeft: 0
+        };
+
+        let timerInterval;
+        let poseDetector;
+        let camera;
+
+        /* ========================
+           ELEMEN DOM
+        ======================== */
+        const screens = {
+            setup: document.getElementById('setup-screen'),
+            loading: document.getElementById('loading-screen'),
+            game: document.getElementById('game-screen'),
+            result: document.getElementById('result-screen')
+        };
+
+        const ui = {
+            qNum: document.getElementById('q-number'),
+            qText: document.getElementById('question-text'),
+            timerText: document.getElementById('timer-text'),
+            timerBg: document.getElementById('timer-bg'),
+            zoneA: document.getElementById('zone-A'),
+            zoneB: document.getElementById('zone-B'),
+            ansAText: document.getElementById('ans-a-text'),
+            ansADesc: document.getElementById('ans-a-desc'),
+            ansBText: document.getElementById('ans-b-text'),
+            ansBDesc: document.getElementById('ans-b-desc'),
+            detStatus: document.getElementById('detection-status')
+        };
+
+        /* ========================
+           INISIALISASI KAMERA & AI
+        ======================== */
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        function onPoseResults(results) {
+            // Draw visual feedback
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.poseLandmarks) {
+                // Gunakan titik hidung (landmark 0) untuk deteksi posisi
+                const nose = results.poseLandmarks[0];
+                
+                // Note: Canvas mirrored via CSS scaleX(-1).
+                // Raw x: 0 is left, 1 is right of the raw image.
+                // Mirrored on screen: raw x=0 appears on the RIGHT side. raw x=1 appears on the LEFT side.
+                // So if raw x > 0.5, player is physically on the right side of the camera, appearing on the LEFT side of the mirrored screen (Zone A).
+                // Let's test standard logic: if nose.x > 0.5 (raw right) -> Screen Left (Zone A).
+                
+                let detectedSide = null;
+                if (nose.x > 0.55) {
+                    detectedSide = 'A'; // Kiri Layar
+                } else if (nose.x < 0.45) {
+                    detectedSide = 'B'; // Kanan Layar
+                }
+
+                // Draw bounding point for feedback
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
+                drawLandmarks(canvasCtx, [nose], {color: '#FF0000', lineWidth: 2, radius: 10});
+
+                updateSelection(detectedSide);
+            } else {
+                updateSelection(null);
+            }
+            canvasCtx.restore();
+        }
+
+        async function initCamera() {
+            screens.setup.classList.add('hidden');
+            screens.loading.classList.remove('hidden');
+
+            try {
+                // Initialize MediaPipe Pose
+                poseDetector = new Pose({locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                }});
+                
+                poseDetector.setOptions({
+                    modelComplexity: 0, // 0 for faster performance on web
+                    smoothLandmarks: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                
+                poseDetector.onResults(onPoseResults);
+
+                // Initialize Camera Utils
+                camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await poseDetector.send({image: videoElement});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                
+                await camera.start();
+                
+                // Adjust canvas size to match video aspect ratio
+                canvasElement.width = 1280;
+                canvasElement.height = 720;
+
+                // Start Game Loop
+                screens.loading.classList.add('hidden');
+                screens.game.classList.remove('hidden');
+                loadQuestion();
+
+            } catch (error) {
+                console.error("Camera Error:", error);
+                alert("Gagal mengakses kamera. Pastikan memberikan izin kamera dan gunakan browser yang mendukung.");
+                location.reload();
+            }
+        }
+
+        /* ========================
+           LOGIKA PERMAINAN
+        ======================== */
+        function startGame() {
+            const nameInput = document.getElementById('input-name').value;
+            const classInput = document.getElementById('input-class').value;
+            const timerSelected = document.querySelector('input[name="timer-setting"]:checked').value;
+
+            if(!nameInput || !classInput) {
+                // Gunakan visual warning, bukan alert
+                const btn = document.querySelector('#setup-screen button');
+                btn.innerText = "Isi Nama & Kelas Dulu! ⚠️";
+                btn.classList.replace('from-green-400', 'from-red-400');
+                btn.classList.replace('to-green-600', 'to-red-600');
+                setTimeout(() => {
+                    btn.innerText = "MULAI BERMAIN! 🚀";
+                    btn.classList.replace('from-red-400', 'from-green-400');
+                    btn.classList.replace('to-red-600', 'to-green-600');
+                }, 2000);
+                return;
+            }
+
+            currentState.playerName = nameInput;
+            currentState.playerClass = classInput;
+            currentState.timerDuration = parseInt(timerSelected);
+            
+            initCamera();
+        }
+
+        function updateSelection(side) {
+            if (!currentState.isTimerRunning) return; // Hanya update visual jika timer jalan
+            
+            currentState.currentChoice = side;
+            
+            ui.zoneA.classList.remove('glow-active');
+            ui.zoneB.classList.remove('glow-active');
+            ui.detStatus.className = "bg-black/50 text-white px-6 py-2 rounded-full text-xl font-bold tracking-widest uppercase transition-colors";
+
+            if (side === 'A') {
+                ui.zoneA.classList.add('glow-active');
+                ui.detStatus.innerHTML = "Memilih <span class='text-blue-400'>KIRI (A)</span>";
+                ui.detStatus.classList.add('border-2', 'border-blue-400');
+            } else if (side === 'B') {
+                ui.zoneB.classList.add('glow-active');
+                ui.detStatus.innerHTML = "Memilih <span class='text-pink-400'>KANAN (B)</span>";
+                ui.detStatus.classList.add('border-2', 'border-pink-400');
+            } else {
+                ui.detStatus.innerHTML = "Mendeteksi Posisi... Berdirilah di area!";
+                ui.detStatus.classList.remove('border-2', 'border-blue-400', 'border-pink-400');
+            }
+        }
+
+        function loadQuestion() {
+            // Reset UI states
+            ui.zoneA.classList.remove('correct-ans', 'wrong-ans', 'glow-active');
+            ui.zoneB.classList.remove('correct-ans', 'wrong-ans', 'glow-active');
+            ui.detStatus.innerHTML = "Mendeteksi Posisi...";
+            
+            const q = quizData[currentState.currentQuestion];
+            ui.qNum.innerText = currentState.currentQuestion + 1;
+            ui.qText.innerText = q.question;
+            
+            ui.ansAText.innerText = q.ansA;
+            ui.ansADesc.innerText = q.descA;
+            ui.ansBText.innerText = q.ansB;
+            ui.ansBDesc.innerText = q.descB;
+
+            startTimer();
+        }
+
+        function startTimer() {
+            currentState.timeLeft = currentState.timerDuration;
+            currentState.isTimerRunning = true;
+            ui.timerText.innerText = currentState.timeLeft;
+            ui.timerBg.style.height = '100%';
+            
+            timerInterval = setInterval(() => {
+                currentState.timeLeft--;
+                ui.timerText.innerText = currentState.timeLeft;
+                
+                // Update background height proportional to time
+                const percent = (currentState.timeLeft / currentState.timerDuration) * 100;
+                ui.timerBg.style.height = `${percent}%`;
+
+                if(currentState.timeLeft <= 3 && currentState.timeLeft > 0) {
+                    ui.timerText.classList.add('text-red-500');
+                    playTick();
+                } else {
+                    ui.timerText.classList.remove('text-red-500');
+                }
+
+                if (currentState.timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    evaluateAnswer();
+                }
+            }, 1000);
+        }
+
+        function evaluateAnswer() {
+            currentState.isTimerRunning = false;
+            const q = quizData[currentState.currentQuestion];
+            const choice = currentState.currentChoice;
+            
+            // Visual feedback
+            if (q.correct === 'A') {
+                ui.zoneA.classList.add('correct-ans');
+                ui.zoneB.classList.add('wrong-ans');
+            } else {
+                ui.zoneB.classList.add('correct-ans');
+                ui.zoneA.classList.add('wrong-ans');
+            }
+
+            if (choice === q.correct) {
+                currentState.score++;
+                ui.detStatus.innerHTML = "BENAR! 🎉 Lulus Norma!";
+                ui.detStatus.className = "bg-green-600 text-white px-8 py-3 rounded-full text-2xl font-black tracking-widest uppercase shadow-lg shadow-green-500/50";
+                playCorrect();
+            } else if (choice === null) {
+                ui.detStatus.innerHTML = "WAKTU HABIS! ⏱️ Tidak ada pilihan";
+                ui.detStatus.className = "bg-red-600 text-white px-8 py-3 rounded-full text-2xl font-black tracking-widest uppercase";
+                playWrong();
+            } else {
+                ui.detStatus.innerHTML = "KURANG TEPAT! 😔 Coba lagi!";
+                ui.detStatus.className = "bg-red-600 text-white px-8 py-3 rounded-full text-2xl font-black tracking-widest uppercase shadow-lg shadow-red-500/50";
+                playWrong();
+            }
+
+            // Tunggu 4 detik sebelum soal berikutnya
+            setTimeout(() => {
+                currentState.currentQuestion++;
+                if (currentState.currentQuestion < quizData.length) {
+                    loadQuestion();
+                } else {
+                    endGame();
+                }
+            }, 4000);
+        }
+
+        /* ========================
+           AKHIR PERMAINAN
+        ======================== */
+        function endGame() {
+            // Stop Camera
+            if (camera) camera.stop();
+            
+            screens.game.classList.add('hidden');
+            screens.result.classList.remove('hidden');
+
+            // Generate Random Text based on prompt request
+            const randSelamat = selamatVariations[Math.floor(Math.random() * selamatVariations.length)];
+            const randMotivasi = motivasiVariations[Math.floor(Math.random() * motivasiVariations.length)];
+            
+            document.getElementById('result-greeting').innerText = randSelamat;
+            document.getElementById('result-motivation').innerText = `"${randMotivasi}"`;
+            document.getElementById('result-evaluation').innerText = evaluasiText;
+
+            // Score Logic
+            document.getElementById('final-score').innerText = currentState.score;
+            document.getElementById('total-score').innerText = quizData.length;
+            
+            const accuracy = (currentState.score / quizData.length) * 100;
+            document.getElementById('accuracy-text').innerText = `${accuracy}%`;
+            
+            // Champion Name (using input from start)
+            document.getElementById('champ-name').innerText = `${currentState.playerName} (${currentState.playerClass})`;
+        }
+    </script>
+</body>
+</html>
